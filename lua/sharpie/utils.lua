@@ -195,7 +195,7 @@ end
 
 -- Check if LSP client is attached to buffer
 function M.has_lsp_client(bufnr, client_name)
-    local clients = vim.lsp.get_active_clients({bufnr = bufnr})
+    local clients = vim.lsp.get_clients({bufnr = bufnr})
     for _, client in ipairs(clients) do
         if client_name == nil or client.name == client_name then
             return true
@@ -206,7 +206,7 @@ end
 
 -- Get C# LSP client for buffer
 function M.get_csharp_client(bufnr)
-    local clients = vim.lsp.get_active_clients({bufnr = bufnr})
+    local clients = vim.lsp.get_clients({bufnr = bufnr})
     for _, client in ipairs(clients) do
         if client.name:match("omnisharp") or client.name:match("csharp") then
             return client

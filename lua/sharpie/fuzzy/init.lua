@@ -1,6 +1,7 @@
 -- Fuzzy finder interface for sharpie.nvim
 local config = require('sharpie.config')
 local utils = require('sharpie.utils')
+local symbol_utils = require('sharpie.symbol_utils')
 local M = {}
 
 -- Get the appropriate fuzzy finder implementation
@@ -68,7 +69,8 @@ end
 
 -- Format symbol for display in fuzzy finder
 function M.format_symbol_for_picker(symbol)
-    local icon = config.get_icon(symbol.kind)
+    -- Use smart icon detection (handles Task types)
+    local icon = symbol_utils.get_symbol_icon(symbol, config.get())
     local name = symbol.name or symbol.simple_name or "Unknown"
 
     -- Add detail if available

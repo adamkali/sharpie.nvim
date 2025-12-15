@@ -13,6 +13,9 @@ M.defaults = {
         height = 20, -- height of the preview window (ignored if style is left or right)
         y_offset = 1, -- y offset (floats interpreted as percentage) (ignored if style is left, right, top, or bottom)
         x_offset = 1, -- x offset (floats interpreted as percentage) (ignored if style is left, right, top, or bottom)
+        auto_reload = true, -- Automatically reload preview when buffer changes
+        auto_reload_debounce = 500, -- Debounce time in ms for auto-reload (default: 500ms)
+        filter_prompt = "> ", -- Prompt shown when filtering (dired-style)
     },
 
     -- Cursor positioning after jump
@@ -45,6 +48,7 @@ M.defaults = {
             object = "",
             dictionary = "",
             key = "",
+            task = "⏳",  -- Hourglass for Task/async methods
         }
     },
 
@@ -73,7 +77,28 @@ M.defaults = {
             search_symbols = "<localleader>sf",
             toggle_highlight = "<localleader>sH",
             start_filtering = "<localleader>s.",
+        },
+        -- Preview window keybindings (buffer-local)
+        preview = {
+            jump_to_symbol = "<CR>",       -- Jump to symbol under cursor
+            next_symbol = "n",             -- Navigate to next symbol
+            prev_symbol = "p",             -- Navigate to previous symbol
+            close = "q",                   -- Close preview window
+            filter = "/",                  -- Start filtering/searching
+            clear_filter = "<Esc>",        -- Clear filter and show all symbols
         }
+    },
+
+    -- Logging configuration
+    logging = {
+        enabled = true,
+        level = "INFO", -- TRACE, DEBUG, INFO, WARN, ERROR, FATAL
+        file = vim.fn.stdpath('data') .. '/sharpie.log',
+        max_file_size = 10 * 1024 * 1024, -- 10MB
+        include_timestamp = true,
+        include_location = true,
+        console_output = false, -- Also output to vim.notify
+        format = "default", -- "default" or "json"
     }
 }
 
@@ -96,6 +121,27 @@ end
 function M.setup(user_config)
     user_config = user_config or {}
     M.options = deep_merge(vim.deepcopy(M.defaults), user_config)
+
+    -- Setup logger with merged config
+    local logger = require('sharpie.logger')
+    local log_config = M.options.logging
+    logger.setup({
+        enabled = log_config.enabled,
+        level = logger.levels[log_config.level] or logger.levels.INFO,
+        file = log_config.file,
+        max_file_size = log_config.max_file_size,
+        include_timestamp = log_config.include_timestamp,
+        include_location = log_config.include_location,
+        console_output = log_config.console_output,
+        format = log_config.format,
+    })
+
+    logger.info("config", "Configuration loaded", {
+        fuzzy_finder = M.options.fuzzy_finder,
+        display_style = M.options.display.style,
+        logging_enabled = log_config.enabled,
+    })
+
     return M.options
 end
 

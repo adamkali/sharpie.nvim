@@ -1,10 +1,14 @@
 -- LSP integration for sharpie.nvim
 local utils = require('sharpie.utils')
+local logger = require('sharpie.logger')
 local M = {}
 
 -- Get document symbols from LSP
 function M.get_document_symbols(bufnr, callback)
+    logger.trace("lsp", "get_document_symbols called", { bufnr = bufnr })
+
     if not utils.has_lsp_client(bufnr) then
+        logger.warn("lsp", "No LSP client attached to buffer", { bufnr = bufnr })
         utils.notify("No LSP client attached to buffer", vim.log.levels.WARN)
         callback(nil)
         return
@@ -14,22 +18,53 @@ function M.get_document_symbols(bufnr, callback)
         textDocument = vim.lsp.util.make_text_document_params(bufnr)
     }
 
+    logger.debug("lsp", "Requesting document symbols", { bufnr = bufnr })
+    local start_time = vim.loop.hrtime()
+
     vim.lsp.buf_request(bufnr, 'textDocument/documentSymbol', params, function(err, result, ctx)
+        local duration_ms = (vim.loop.hrtime() - start_time) / 1000000
+
         if err then
+            logger.error("lsp", "Error getting document symbols", { error = vim.inspect(err), bufnr = bufnr })
             utils.notify("Error getting document symbols: " .. vim.inspect(err), vim.log.levels.ERROR)
             callback(nil)
             return
         end
 
         if not result or vim.tbl_isempty(result) then
+            logger.info("lsp", "No symbols found in document", { bufnr = bufnr, duration_ms = duration_ms })
             callback({})
             return
         end
 
         -- Flatten and process symbols
         local symbols = M.flatten_symbols(result)
+        logger.info("lsp", "Document symbols retrieved", {
+            bufnr = bufnr,
+            symbol_count = #symbols,
+            duration_ms = duration_ms
+        })
         callback(symbols)
     end)
+end
+
+-- Clean symbol name (remove file extensions)
+local function clean_symbol_name(name)
+    if not name then
+        return name
+    end
+
+    -- Remove common file extensions
+    name = name:gsub("%.cs$", "")
+    name = name:gsub("%.vb$", "")
+    name = name:gsub("%.fs$", "")
+
+    -- Remove .cs from middle of names (e.g., "File.cs.Namespace" -> "File.Namespace")
+    name = name:gsub("%.cs%.", ".")
+    name = name:gsub("%.vb%.", ".")
+    name = name:gsub("%.fs%.", ".")
+
+    return name
 end
 
 -- Flatten hierarchical symbols into a flat list
@@ -38,13 +73,16 @@ function M.flatten_symbols(symbols, parent_name, result)
     parent_name = parent_name or ""
 
     for _, symbol in ipairs(symbols) do
+        -- Clean the symbol name
+        local clean_name = clean_symbol_name(symbol.name)
+
         -- Build full name with parent context
-        local full_name = parent_name ~= "" and (parent_name .. "." .. symbol.name) or symbol.name
+        local full_name = parent_name ~= "" and (parent_name .. "." .. clean_name) or clean_name
 
         -- Extract symbol information
         local item = {
             name = full_name,
-            simple_name = symbol.name,
+            simple_name = clean_name,
             kind = M.symbol_kind_to_string(symbol.kind),
             detail = symbol.detail,
             range = symbol.range or symbol.location and symbol.location.range,
@@ -98,7 +136,10 @@ end
 
 -- Get references for a symbol at position
 function M.get_references(bufnr, line, col, callback)
+    logger.trace("lsp", "get_references called", { bufnr = bufnr, line = line, col = col })
+
     if not utils.has_lsp_client(bufnr) then
+        logger.warn("lsp", "No LSP client attached to buffer", { bufnr = bufnr })
         utils.notify("No LSP client attached to buffer", vim.log.levels.WARN)
         callback(nil)
         return
@@ -107,14 +148,21 @@ function M.get_references(bufnr, line, col, callback)
     local params = vim.lsp.util.make_position_params(0, nil)
     params.context = { includeDeclaration = true }
 
+    logger.debug("lsp", "Requesting references", { bufnr = bufnr, line = line, col = col })
+    local start_time = vim.loop.hrtime()
+
     vim.lsp.buf_request(bufnr, 'textDocument/references', params, function(err, result, ctx)
+        local duration_ms = (vim.loop.hrtime() - start_time) / 1000000
+
         if err then
+            logger.error("lsp", "Error getting references", { error = vim.inspect(err), bufnr = bufnr })
             utils.notify("Error getting references: " .. vim.inspect(err), vim.log.levels.ERROR)
             callback(nil)
             return
         end
 
         if not result or vim.tbl_isempty(result) then
+            logger.info("lsp", "No references found", { bufnr = bufnr, duration_ms = duration_ms })
             callback({})
             return
         end
@@ -130,6 +178,11 @@ function M.get_references(bufnr, line, col, callback)
             })
         end
 
+        logger.info("lsp", "References retrieved", {
+            bufnr = bufnr,
+            reference_count = #references,
+            duration_ms = duration_ms
+        })
         callback(references)
     end)
 end
@@ -220,7 +273,7 @@ end
 
 -- Get LSP client info for buffer
 function M.get_client_info(bufnr)
-    local clients = vim.lsp.get_active_clients({bufnr = bufnr})
+    local clients = vim.lsp.get_clients({bufnr = bufnr})
     local info = {}
 
     for _, client in ipairs(clients) do
