@@ -458,8 +458,18 @@ end
 
 -- Jump to symbol location
 function M.jump_to_symbol(symbol)
-    -- Prefer selectionRange (points to symbol name) over range (whole declaration)
-    local target_range = symbol.selectionRange or symbol.range
+    -- Handle workspace symbols (with location) and document symbols (with range)
+    local uri = nil
+    local target_range = nil
+
+    if symbol.location then
+        -- Workspace symbol: has location with uri and range
+        uri = symbol.location.uri
+        target_range = symbol.location.range
+    else
+        -- Document symbol: has selectionRange or range
+        target_range = symbol.selectionRange or symbol.range
+    end
 
     if not target_range then
         logger.warn("init", "Attempted to jump to symbol without range", { symbol = symbol.name })
@@ -473,14 +483,29 @@ function M.jump_to_symbol(symbol)
         symbol = symbol.name,
         line = line,
         col = col,
-        used_selection_range = symbol.selectionRange ~= nil
+        uri = uri,
+        is_workspace_symbol = uri ~= nil
     })
 
     -- Get the main window
     local main_winnr = utils.get_main_window(M.state.preview_winnr)
 
-    -- Switch to main window
-    vim.api.nvim_set_current_win(main_winnr)
+    -- If symbol is in a different file, open that file
+    if uri then
+        local filepath = vim.uri_to_fname(uri)
+        local current_file = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(main_winnr))
+
+        if filepath ~= current_file then
+            logger.info("init", "Opening file for workspace symbol", { filepath = filepath })
+            vim.api.nvim_set_current_win(main_winnr)
+            vim.cmd.edit(filepath)
+        else
+            vim.api.nvim_set_current_win(main_winnr)
+        end
+    else
+        -- Same file, just switch to main window
+        vim.api.nvim_set_current_win(main_winnr)
+    end
 
     -- Jump to location
     vim.api.nvim_win_set_cursor(main_winnr, {line, col})

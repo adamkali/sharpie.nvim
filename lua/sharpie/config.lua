@@ -61,6 +61,8 @@ M.defaults = {
         -- 1: Program.Main(string[] args)
         -- 0: Main(string[] args)
         path = 2,
+        workspace_symbols = true, -- Query symbols from entire workspace/project, not just current file
+        show_file_location = true, -- Show file path for symbols from other files
     },
 
     -- Keybinding settings
