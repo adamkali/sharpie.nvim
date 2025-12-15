@@ -1,0 +1,33 @@
+# Lua compiled files
+*.luac
+
+# Luarocks
+*.rockspec
+*.rock
+
+# Busted testing
+luacov.*
+
+# Editor files
+*.swp
+*.swo
+*~
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Documentation build artifacts
+doc/tags
+
+# Neovim plugin manager directories (for testing)
+.deps/
+.repro/

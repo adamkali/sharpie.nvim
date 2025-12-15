@@ -1,0 +1,155 @@
+@document.meta
+title: sharpie.nvim
+description: C# Symbol Viewer for Neovim
+author: Your Name
+categories: neovim plugin documentation
+created: 2025-12-15
+version: 1.0.0
+@end
+
+* sharpie.nvim
+  A Neovim plugin for viewing and navigating C# class structure using LSP symbols.
+
+** Overview
+   sharpie.nvim provides a TUI interface for browsing C# code structure, including:
+   - Namespaces
+   - Classes and Interfaces
+   - Methods and Properties
+   - Fields and Events
+   - Constructors and Operators
+
+** Features
+   - *Symbol Tree View*: Display all symbols in a structured preview window
+   - *LSP Integration*: Uses C# language server for accurate symbol information
+   - *Quick Navigation*: Jump to definitions and cycle through references
+   - *Fuzzy Search*: Search symbols using Telescope or FZF
+   - *Symbol Highlighting*: Highlight all occurrences of a symbol
+   - *Quickfix Integration*: Add references to quickfix list
+   - *Customizable*: Configure appearance, keybindings, and behavior
+
+** Requirements
+   - Neovim >= 0.8.0
+   - C# LSP server (OmniSharp or csharp-ls)
+   - Optional: telescope.nvim or fzf-lua
+   - Optional: nvim-treesitter with C# parser
+
+** Installation
+*** Using lazy.nvim
+    @code lua
+    {
+        'yourusername/sharpie.nvim',
+        dependencies = {
+            'nvim-telescope/telescope.nvim',
+        },
+        config = function()
+            require('sharpie').setup()
+        end,
+    }
+    @end
+
+*** Using packer.nvim
+    @code lua
+    use {
+        'yourusername/sharpie.nvim',
+        requires = { 'nvim-telescope/telescope.nvim' },
+        config = function()
+            require('sharpie').setup()
+        end
+    }
+    @end
+
+** Configuration
+*** Display Settings
+    Configure the preview window appearance:
+    - `style`: Position of window (left, right, top, bottom, float)
+    - `width`: Width in columns (for left/right splits)
+    - `height`: Height in rows (for top/bottom splits)
+    - `x_offset`/`y_offset`: Position offsets for float windows
+
+*** Symbol Options
+    Control symbol display:
+    - `namespace`: Show all classes in namespace or just current buffer
+    - `path`: Symbol path depth (0-3)
+    -- 0: Just symbol name
+    -- 1: Class.Symbol
+    -- 2: Namespace.Class.Symbol (default)
+    -- 3: Full namespace path
+
+*** Keybindings
+    Customize keybindings:
+    - `sharpie_local_leader`: Prefix for all keybindings (default: '+')
+    - `disable_default_keybindings`: Disable all default keybindings
+    - `overrides`: Override specific keybindings
+
+** API Functions
+*** Display Functions
+    - `show(bufnr)` - Show preview window with symbols
+    - `hide(bufnr)` - Hide preview window
+
+*** Navigation Functions
+    - `step_to_next_symbol(bufnr)` - Jump to next symbol
+    - `step_to_prev_symbol(bufnr)` - Jump to previous symbol
+    - `step_to_next_reference(bufnr)` - Jump to next reference
+    - `step_to_prev_reference(bufnr)` - Jump to previous reference
+
+*** Search Functions
+    - `search_symbols(query, bufnr)` - Search symbols with fuzzy finder
+    - `search_go_to_reference(symbol_id, bufnr)` - Find and go to reference
+    - `search_go_to_definition(symbol_id, bufnr)` - Find and go to definition
+
+*** Highlight Functions
+    - `highlight_symbol_occurrences(symbol_id, hl_group, bufnr, bg, fg, on)` - Highlight occurrences
+    - `add_occurences_to_qflist(symbol_id, bufnr)` - Add to quickfix list
+
+*** Utility Functions
+    - `checkhealth()` - Run health check
+
+** Default Keybindings
+   With `+` as the local leader prefix:
+   - `+ss` - Show preview window
+   - `+sh` - Hide preview window
+   - `+sn` - Next symbol
+   - `+sp` - Previous symbol
+   - `+sN` - Next reference
+   - `+sP` - Previous reference
+   - `+sH` - Toggle highlighting
+   - `+s.` - Start filtering
+   - `+sf` - Search symbols
+
+** Preview Window Keys
+   When the preview window is focused:
+   - `<CR>` - Jump to symbol under cursor
+   - `n` - Next symbol
+   - `p` - Previous symbol
+   - `q` - Close preview
+   - `/` - Start filtering
+
+** Example Workflow
+   # Open a C# file
+   # Press `+ss` to show symbols
+   # Navigate with `n`/`p` or `<CR>`
+   # Press `/` to search
+   # Press `+sH` to highlight occurrences
+   # Use `+sN`/`+sP` to cycle through references
+
+** Symbol Display Example
+   @code
+    MyNamespace
+       MyNamespace.Program
+       ( 󰟢 ) MyNamespace.Program.Main(string[] args)
+       MyNamespace.MyClass
+       (  ) MyNamespace.MyClass.MyProperty
+       (  ) MyNamespace.MyClass.MyStaticInt()
+       (  ) MyNamespace.MyClass.MyAsyncMethod()
+       (  <> ) MyNamespace.MyClass.MyAsyncMethod2()
+   @end
+
+** Health Check
+   Run `:checkhealth sharpie` to verify:
+   - LSP is active
+   - C# LSP client is available
+   - Treesitter is available (optional)
+   - Configured fuzzy finder is installed
+
+** License
+   MIT License
