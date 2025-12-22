@@ -25,6 +25,13 @@ M.state = {
     highlight_enabled = false,
     filter_query = "",  -- Current filter query
     filtering_mode = false,  -- Interactive filtering mode (dired-style)
+
+    -- Namespace mode state
+    namespace_mode = false,           -- Toggle: file-only vs namespace-wide
+    current_namespace = nil,          -- Cached namespace/package name
+    symbols_by_file = {},            -- Grouped symbols: { uri -> symbols[] }
+    namespace_file_order = {},       -- Ordered list of URIs for rendering
+    flat_symbol_list = {},           -- Navigation list with type tags (for namespace mode)
 }
 
 -- Setup function
@@ -55,24 +62,39 @@ local function refresh_preview_if_open(bufnr)
     -- Only refresh if preview is open and this is the main buffer
     if M.state.preview_winnr and vim.api.nvim_win_is_valid(M.state.preview_winnr) and
        M.state.main_bufnr == bufnr then
-        logger.debug("init", "Refreshing preview due to buffer change", { bufnr = bufnr })
+        logger.debug("init", "Refreshing preview due to buffer change", {
+            bufnr = bufnr,
+            namespace_mode = M.state.namespace_mode
+        })
 
-        -- Re-fetch symbols and update preview
-        lsp.get_document_symbols(bufnr, function(symbols)
-            if not symbols then
-                logger.warn("init", "Failed to refresh symbols after buffer change")
-                return
-            end
-
-            M.state.symbols = symbols
-
-            -- If filter is active, re-apply it
-            if M.state.filter_query ~= "" then
-                M.filter_symbols(M.state.filter_query)
+        -- Branch based on mode
+        if M.state.namespace_mode then
+            -- Namespace mode: refresh with namespace symbols
+            local lang_config = M.state.current_language
+            if lang_config then
+                M.show_namespace_symbols(bufnr, lang_config)
             else
-                M.render_preview(symbols)
+                -- Fallback to file-only if language not detected
+                M.show_file_symbols(bufnr)
             end
-        end)
+        else
+            -- File-only mode: re-fetch document symbols
+            lsp.get_document_symbols(bufnr, function(symbols)
+                if not symbols then
+                    logger.warn("init", "Failed to refresh symbols after buffer change")
+                    return
+                end
+
+                M.state.symbols = symbols
+
+                -- If filter is active, re-apply it
+                if M.state.filter_query ~= "" then
+                    M.filter_symbols(M.state.filter_query)
+                else
+                    M.render_preview(symbols)
+                end
+            end)
+        end
     end
 end
 
@@ -192,16 +214,184 @@ function M.setup_keybindings()
             vim.keymap.set('n', key, function() M.search_symbols() end, { desc = "Sharpie: Search symbols" })
         elseif name == "toggle_highlight" then
             vim.keymap.set('n', key, function() M.toggle_highlight() end, { desc = "Sharpie: Toggle highlight" })
+        elseif name == "toggle_namespace_mode" then
+            vim.keymap.set('n', key, function() M.toggle_namespace_mode() end, { desc = "Sharpie: Toggle namespace mode" })
         elseif name == "start_filtering" then
             vim.keymap.set('n', key, function() M.start_filtering() end, { desc = "Sharpie: Start filtering" })
         end
     end
 end
 
+-- Show preview window with symbols (file-only mode)
+function M.show_file_symbols(bufnr)
+    logger.debug("init", "show_file_symbols() called", { bufnr = bufnr })
+
+    -- Clear namespace mode state
+    M.state.current_namespace = nil
+    M.state.symbols_by_file = {}
+    M.state.namespace_file_order = {}
+    M.state.flat_symbol_list = {}
+
+    -- Get symbols from LSP for current file only
+    lsp.get_document_symbols(bufnr, function(symbols)
+        if not symbols or #symbols == 0 then
+            logger.info("init", "No symbols found in buffer", { bufnr = bufnr })
+            utils.notify("No symbols found", vim.log.levels.INFO)
+            return
+        end
+
+        logger.info("init", "Rendering preview with file symbols", { symbol_count = #symbols })
+        M.state.symbols = symbols
+        M.state.filtered_symbols = symbols
+        M.render_preview(symbols)
+    end)
+end
+
+-- Show preview window with symbols (namespace-wide mode)
+function M.show_namespace_symbols(bufnr, lang_config)
+    logger.debug("init", "show_namespace_symbols() called", { bufnr = bufnr })
+
+    -- Detect namespace/package for current file
+    local namespace_detector = require('sharpie.namespace_detector')
+    local namespace = namespace_detector.detect_namespace(bufnr, lang_config)
+
+    if not namespace then
+        logger.warn("init", "Could not detect namespace/package")
+        utils.notify("Could not detect namespace/package for this file", vim.log.levels.WARN)
+        -- Fall back to file-only mode
+        M.show_file_symbols(bufnr)
+        return
+    end
+
+    M.state.current_namespace = namespace
+    logger.info("init", "Detected namespace", { namespace = namespace })
+
+    -- Query workspace symbols using namespace as query
+    lsp.get_workspace_symbols(namespace, function(workspace_symbols)
+        if not workspace_symbols or #workspace_symbols == 0 then
+            logger.info("init", "No workspace symbols found for namespace", { namespace = namespace })
+            utils.notify(string.format("No symbols found in namespace: %s", namespace), vim.log.levels.INFO)
+            return
+        end
+
+        logger.debug("init", "Received workspace symbols", { count = #workspace_symbols })
+
+        -- Filter symbols by namespace
+        local filtered = M.filter_by_namespace(workspace_symbols, namespace, lang_config)
+        logger.info("init", "Filtered symbols by namespace", {
+            total = #workspace_symbols,
+            filtered = #filtered,
+            namespace = namespace
+        })
+
+        if #filtered == 0 then
+            utils.notify(string.format("No symbols found in namespace: %s", namespace), vim.log.levels.INFO)
+            return
+        end
+
+        -- Group symbols by file
+        local grouped = M.group_symbols_by_file(filtered)
+
+        M.state.symbols = filtered
+        M.state.filtered_symbols = filtered
+        M.state.symbols_by_file = grouped.by_file
+        M.state.namespace_file_order = grouped.file_order
+
+        -- Render namespace mode preview
+        M.render_preview_namespace_mode(grouped)
+    end)
+end
+
+-- Filter workspace symbols by namespace
+-- @param symbols table: List of workspace symbols from LSP
+-- @param namespace string: Target namespace/package name
+-- @param lang_config table: Language configuration
+-- @return table: Filtered list of symbols
+function M.filter_by_namespace(symbols, namespace, lang_config)
+    local namespace_detector = require('sharpie.namespace_detector')
+    local filtered = {}
+
+    for _, symbol in ipairs(symbols) do
+        local symbol_name = symbol.name or ""
+        local container_name = symbol.containerName or ""
+
+        -- Check if symbol belongs to namespace
+        local matches = false
+
+        if lang_config.name == "csharp" then
+            -- For C#, check both symbol name and container name
+            -- Container name often contains the namespace
+            if namespace_detector.symbol_matches_namespace(symbol_name, namespace) then
+                matches = true
+            elseif namespace_detector.symbol_matches_namespace(container_name, namespace) then
+                matches = true
+            elseif container_name:find("^" .. vim.pesc(namespace) .. "$") then
+                matches = true
+            end
+        elseif lang_config.name == "go" then
+            -- For Go, match package name exactly in container
+            -- Go LSP typically puts package name in containerName
+            if container_name == namespace then
+                matches = true
+            end
+        end
+
+        if matches then
+            table.insert(filtered, symbol)
+        end
+    end
+
+    return filtered
+end
+
+-- Group symbols by file URI
+-- @param symbols table: List of workspace symbols
+-- @return table: { by_file = {uri -> symbols[]}, file_order = uri[], all_symbols = symbols[] }
+function M.group_symbols_by_file(symbols)
+    local by_file = {}
+    local file_set = {}
+
+    -- Group symbols by URI
+    for _, symbol in ipairs(symbols) do
+        if symbol.location and symbol.location.uri then
+            local uri = symbol.location.uri
+
+            if not by_file[uri] then
+                by_file[uri] = {}
+                file_set[uri] = true
+            end
+
+            table.insert(by_file[uri], symbol)
+        end
+    end
+
+    -- Sort symbols within each file by line number
+    for uri, file_symbols in pairs(by_file) do
+        table.sort(file_symbols, function(a, b)
+            local a_line = a.location.range.start.line
+            local b_line = b.location.range.start.line
+            return a_line < b_line
+        end)
+    end
+
+    -- Create ordered file list (sorted by URI for deterministic ordering)
+    local file_order = {}
+    for uri in pairs(file_set) do
+        table.insert(file_order, uri)
+    end
+    table.sort(file_order)
+
+    return {
+        by_file = by_file,
+        file_order = file_order,
+        all_symbols = symbols,
+    }
+end
+
 -- Show preview window with symbols
 function M.show(bufnr)
     bufnr = bufnr or vim.api.nvim_get_current_buf()
-    logger.info("init", "show() called", { bufnr = bufnr })
+    logger.info("init", "show() called", { bufnr = bufnr, namespace_mode = M.state.namespace_mode })
     M.state.main_bufnr = bufnr
 
     -- Detect language for this buffer
@@ -215,18 +405,12 @@ function M.show(bufnr)
     logger.debug("init", "Detected language", { language = lang_config.name })
     M.state.current_language = lang_config
 
-    -- Get symbols from LSP
-    lsp.get_document_symbols(bufnr, function(symbols)
-        if not symbols or #symbols == 0 then
-            logger.info("init", "No symbols found in buffer", { bufnr = bufnr })
-            utils.notify("No symbols found", vim.log.levels.INFO)
-            return
-        end
-
-        logger.info("init", "Rendering preview with symbols", { symbol_count = #symbols })
-        M.state.symbols = symbols
-        M.render_preview(symbols)
-    end)
+    -- Branch based on mode
+    if M.state.namespace_mode then
+        M.show_namespace_symbols(bufnr, lang_config)
+    else
+        M.show_file_symbols(bufnr)
+    end
 end
 
 -- Hide preview window
@@ -332,6 +516,185 @@ function M.render_preview(symbols, use_filtered)
     end
 end
 
+-- Get relative path from absolute file path
+-- Strips workspace root from file path for cleaner display
+-- @param filepath string: Absolute file path
+-- @return string: Relative path or basename if workspace root not found
+function M.get_relative_path(filepath)
+    -- Try to find workspace root
+    local cwd = vim.fn.getcwd()
+
+    -- If filepath starts with cwd, strip it
+    if filepath:sub(1, #cwd) == cwd then
+        local relative = filepath:sub(#cwd + 2)  -- +2 to skip the trailing slash
+        return relative
+    end
+
+    -- Fallback: return just the filename
+    return vim.fn.fnamemodify(filepath, ":t")
+end
+
+-- Format file header separator
+-- @param filepath string: File path (URI or absolute path)
+-- @param symbol_count number: Number of symbols in this file
+-- @param style string: "line" | "box" | "bold"
+-- @return string: Formatted header line
+function M.format_file_header(filepath, symbol_count, style)
+    style = style or "line"
+
+    -- Convert URI to file path if needed
+    if filepath:match("^file://") then
+        filepath = vim.uri_to_fname(filepath)
+    end
+
+    local relative_path = M.get_relative_path(filepath)
+    local header_text = string.format("%s (%d symbols)", relative_path, symbol_count)
+
+    if style == "line" then
+        return string.format("─── %s ───", header_text)
+    elseif style == "box" then
+        return string.format("┌─── %s", header_text)
+    elseif style == "bold" then
+        return string.format("▶ %s", header_text)
+    else
+        return string.format("─── %s ───", header_text)
+    end
+end
+
+-- Render preview window with symbols (namespace mode)
+-- Displays symbols grouped by file with separators
+-- @param grouped table: Result from M.group_symbols_by_file()
+function M.render_preview_namespace_mode(grouped)
+    -- Create or reuse preview buffer
+    if not M.state.preview_bufnr or not utils.is_buffer_valid(M.state.preview_bufnr) then
+        M.state.preview_bufnr = utils.create_preview_buffer()
+    end
+
+    local lines = {}
+    local flat_list = {}  -- For navigation: tracks type of each line
+    local separator_style = config.get().symbol_options.namespace_mode_separator_style or "line"
+
+    -- Header: Namespace information
+    local total_symbols = #grouped.all_symbols
+    local file_count = #grouped.file_order
+    local namespace_header = string.format("Namespace: %s (%d symbols across %d files)",
+        M.state.current_namespace or "Unknown",
+        total_symbols,
+        file_count)
+
+    table.insert(lines, namespace_header)
+    table.insert(flat_list, { type = "namespace_header", line = #lines })
+
+    table.insert(lines, string.rep("═", math.min(80, #namespace_header)))
+    table.insert(flat_list, { type = "separator", line = #lines })
+
+    table.insert(lines, "")
+    table.insert(flat_list, { type = "blank", line = #lines })
+
+    -- Render symbols grouped by file
+    for _, uri in ipairs(grouped.file_order) do
+        local file_symbols = grouped.by_file[uri]
+
+        -- File header
+        local header_line = M.format_file_header(uri, #file_symbols, separator_style)
+        table.insert(lines, header_line)
+        table.insert(flat_list, { type = "file_header", line = #lines, uri = uri })
+
+        -- Render symbols for this file
+        for _, symbol in ipairs(file_symbols) do
+            -- Get language-specific handler
+            local lang_handler = M.state.current_language and language.get_handler(M.state.current_language)
+
+            -- Get appropriate icon
+            local icon
+            if lang_handler and lang_handler.get_symbol_icon then
+                icon = lang_handler.get_symbol_icon(symbol, config.get())
+            else
+                icon = config.get_icon(symbol.kind)
+            end
+
+            -- For workspace symbols, use the simple name (not full qualified name)
+            -- since the file context already provides namespace information
+            local symbol_name = symbol.name or ""
+
+            -- Get language-specific indicators
+            local indicators
+            if lang_handler and lang_handler.get_indicators then
+                indicators = lang_handler.get_indicators(symbol)
+            else
+                indicators = {}
+            end
+
+            local indicator_str = #indicators > 0 and ("(" .. table.concat(indicators, " ") .. ")") or ""
+
+            local line = string.format("  %s %s %s", icon, indicator_str, symbol_name)
+            table.insert(lines, line)
+            table.insert(flat_list, {
+                type = "symbol",
+                line = #lines,
+                symbol = symbol,
+                uri = uri
+            })
+        end
+
+        -- Add blank line between files
+        table.insert(lines, "")
+        table.insert(flat_list, { type = "blank", line = #lines })
+    end
+
+    -- Store flat list for navigation
+    M.state.flat_symbol_list = flat_list
+
+    -- Set buffer content
+    utils.set_buffer_lines(M.state.preview_bufnr, lines)
+
+    -- Apply namespace mode highlighting
+    M.apply_namespace_mode_highlighting(M.state.preview_bufnr, flat_list)
+
+    -- Create or update window
+    if not M.state.preview_winnr or not utils.is_window_valid(M.state.preview_winnr) then
+        local display_config = config.get().display
+        local win_config = utils.calculate_window_config(
+            display_config.style,
+            display_config.width,
+            display_config.height,
+            display_config.y_offset,
+            display_config.x_offset
+        )
+
+        M.state.preview_winnr = utils.create_window(M.state.preview_bufnr, win_config)
+
+        -- Set up buffer-local keymaps for the preview window
+        M.setup_preview_keymaps(M.state.preview_bufnr)
+    end
+end
+
+-- Apply highlighting for namespace mode
+-- @param bufnr number: Buffer number
+-- @param flat_list table: List of line metadata with types
+function M.apply_namespace_mode_highlighting(bufnr, flat_list)
+    -- Clear existing highlights
+    vim.api.nvim_buf_clear_namespace(bufnr, -1, 0, -1)
+
+    for _, entry in ipairs(flat_list) do
+        local line_idx = entry.line - 1  -- Convert to 0-indexed
+
+        if entry.type == "namespace_header" then
+            -- Highlight entire line
+            hl_groups.highlight_line(bufnr, line_idx, 0, -1, "SharpieNamespaceHeader")
+        elseif entry.type == "file_header" then
+            -- Highlight entire line
+            hl_groups.highlight_line(bufnr, line_idx, 0, -1, "SharpieFileHeader")
+        elseif entry.type == "separator" then
+            -- Highlight entire line
+            hl_groups.highlight_line(bufnr, line_idx, 0, -1, "SharpieFileHeader")
+        elseif entry.type == "symbol" and entry.symbol then
+            -- Apply symbol-kind specific highlighting (similar to file-only mode)
+            -- This will be handled by hl_groups module if needed
+        end
+    end
+end
+
 -- Clear all preview keymaps from the buffer
 local function clear_preview_keymaps(bufnr)
     local preview_keys = config.get().keybindings.preview
@@ -370,18 +733,26 @@ function M.setup_preview_keymaps(bufnr)
         vim.keymap.set('n', preview_keys.jump_to_symbol, function()
             local line = vim.api.nvim_win_get_cursor(M.state.preview_winnr)[1]
 
-            -- Check if filtering is active
-            local is_filtered = M.state.filter_query ~= ""
-            local symbol_list = is_filtered and M.state.filtered_symbols or M.state.symbols
+            -- Handle namespace mode
+            if M.state.namespace_mode and M.state.flat_symbol_list then
+                local entry = M.state.flat_symbol_list[line]
+                if entry and entry.type == "symbol" and entry.symbol then
+                    M.jump_to_symbol(entry.symbol)
+                end
+            else
+                -- File-only mode: use existing logic
+                local is_filtered = M.state.filter_query ~= ""
+                local symbol_list = is_filtered and M.state.filtered_symbols or M.state.symbols
 
-            -- Account for filter status header (2 lines when filtered)
-            local symbol_index = line
-            if is_filtered and line > 2 then
-                symbol_index = line - 2  -- Skip the filter header lines
-            end
+                -- Account for filter status header (2 lines when filtered)
+                local symbol_index = line
+                if is_filtered and line > 2 then
+                    symbol_index = line - 2  -- Skip the filter header lines
+                end
 
-            if symbol_index > 0 and symbol_index <= #symbol_list then
-                M.step_to_symbol_by_index(symbol_index, is_filtered)
+                if symbol_index > 0 and symbol_index <= #symbol_list then
+                    M.step_to_symbol_by_index(symbol_index, is_filtered)
+                end
             end
         end, { buffer = bufnr, desc = "Sharpie: Jump to symbol" })
     end
@@ -422,6 +793,38 @@ function M.setup_preview_keymaps(bufnr)
     end
 end
 
+-- Find next symbol line in flat_symbol_list (for namespace mode navigation)
+-- @param current_line number: Current line number (1-indexed)
+-- @param direction number: 1 for forward, -1 for backward
+-- @return number|nil: Next symbol line number or nil if not found
+function M.find_next_symbol_line(current_line, direction)
+    if not M.state.flat_symbol_list or #M.state.flat_symbol_list == 0 then
+        return nil
+    end
+
+    local start_idx = current_line + direction
+    local list_size = #M.state.flat_symbol_list
+
+    -- Search in direction with wrapping
+    for i = 1, list_size do
+        local idx = start_idx + (i - 1) * direction
+
+        -- Wrap around
+        if idx > list_size then
+            idx = idx - list_size
+        elseif idx < 1 then
+            idx = idx + list_size
+        end
+
+        local entry = M.state.flat_symbol_list[idx]
+        if entry and entry.type == "symbol" then
+            return idx
+        end
+    end
+
+    return nil
+end
+
 -- Step to symbol by index
 function M.step_to_symbol_by_index(index, use_filtered)
     if not M.state.symbols or #M.state.symbols == 0 then
@@ -450,16 +853,35 @@ function M.step_to_next_symbol(bufnr)
         return
     end
 
-    -- Use filtered symbols if filtering is active
-    local is_filtered = M.state.filter_query ~= ""
-    local symbol_list = is_filtered and M.state.filtered_symbols or M.state.symbols
+    -- Handle namespace mode differently
+    if M.state.namespace_mode and M.state.flat_symbol_list and #M.state.flat_symbol_list > 0 then
+        -- Get current line in preview window
+        if not M.state.preview_winnr or not utils.is_window_valid(M.state.preview_winnr) then
+            return
+        end
 
-    M.state.current_symbol_index = M.state.current_symbol_index + 1
-    if M.state.current_symbol_index > #symbol_list then
-        M.state.current_symbol_index = 1
+        local current_line = vim.api.nvim_win_get_cursor(M.state.preview_winnr)[1]
+        local next_line = M.find_next_symbol_line(current_line, 1)  -- direction: forward
+
+        if next_line then
+            vim.api.nvim_win_set_cursor(M.state.preview_winnr, {next_line, 0})
+            local entry = M.state.flat_symbol_list[next_line]
+            if entry and entry.symbol then
+                M.jump_to_symbol(entry.symbol)
+            end
+        end
+    else
+        -- File-only mode: use existing logic
+        local is_filtered = M.state.filter_query ~= ""
+        local symbol_list = is_filtered and M.state.filtered_symbols or M.state.symbols
+
+        M.state.current_symbol_index = M.state.current_symbol_index + 1
+        if M.state.current_symbol_index > #symbol_list then
+            M.state.current_symbol_index = 1
+        end
+
+        M.step_to_symbol_by_index(M.state.current_symbol_index, is_filtered)
     end
-
-    M.step_to_symbol_by_index(M.state.current_symbol_index, is_filtered)
 end
 
 -- Step to previous symbol
@@ -468,16 +890,35 @@ function M.step_to_prev_symbol(bufnr)
         return
     end
 
-    -- Use filtered symbols if filtering is active
-    local is_filtered = M.state.filter_query ~= ""
-    local symbol_list = is_filtered and M.state.filtered_symbols or M.state.symbols
+    -- Handle namespace mode differently
+    if M.state.namespace_mode and M.state.flat_symbol_list and #M.state.flat_symbol_list > 0 then
+        -- Get current line in preview window
+        if not M.state.preview_winnr or not utils.is_window_valid(M.state.preview_winnr) then
+            return
+        end
 
-    M.state.current_symbol_index = M.state.current_symbol_index - 1
-    if M.state.current_symbol_index < 1 then
-        M.state.current_symbol_index = #symbol_list
+        local current_line = vim.api.nvim_win_get_cursor(M.state.preview_winnr)[1]
+        local prev_line = M.find_next_symbol_line(current_line, -1)  -- direction: backward
+
+        if prev_line then
+            vim.api.nvim_win_set_cursor(M.state.preview_winnr, {prev_line, 0})
+            local entry = M.state.flat_symbol_list[prev_line]
+            if entry and entry.symbol then
+                M.jump_to_symbol(entry.symbol)
+            end
+        end
+    else
+        -- File-only mode: use existing logic
+        local is_filtered = M.state.filter_query ~= ""
+        local symbol_list = is_filtered and M.state.filtered_symbols or M.state.symbols
+
+        M.state.current_symbol_index = M.state.current_symbol_index - 1
+        if M.state.current_symbol_index < 1 then
+            M.state.current_symbol_index = #symbol_list
+        end
+
+        M.step_to_symbol_by_index(M.state.current_symbol_index, is_filtered)
     end
-
-    M.step_to_symbol_by_index(M.state.current_symbol_index, is_filtered)
 end
 
 -- Jump to symbol location
@@ -977,6 +1418,22 @@ end
 -- Toggle highlight
 function M.toggle_highlight()
     M.highlight_symbol_occurrences(nil, nil, nil, nil, nil, nil)
+end
+
+-- Toggle namespace mode (switch between file-only and namespace-wide views)
+function M.toggle_namespace_mode()
+    M.state.namespace_mode = not M.state.namespace_mode
+
+    local mode_name = M.state.namespace_mode and "namespace-wide" or "file-only"
+    logger.info("init", "Toggled namespace mode", { new_mode = mode_name })
+
+    -- Refresh preview if open
+    if M.state.preview_winnr and utils.is_window_valid(M.state.preview_winnr) then
+        local bufnr = M.state.main_bufnr or vim.api.nvim_get_current_buf()
+        M.show(bufnr)
+    end
+
+    utils.notify(string.format("Symbol view: %s mode", mode_name), vim.log.levels.INFO)
 end
 
 -- Add occurrences to quickfix list

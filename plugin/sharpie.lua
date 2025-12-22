@@ -55,6 +55,12 @@ end, {
     desc = "Clear symbol filter in preview"
 })
 
+vim.api.nvim_create_user_command('SharpieToggleNamespaceMode', function()
+    require('sharpie').toggle_namespace_mode()
+end, {
+    desc = "Toggle between file-only and namespace-wide symbol view"
+})
+
 -- Logging commands
 vim.api.nvim_create_user_command('SharpieLog', function(opts)
     local logger = require('sharpie.logger')

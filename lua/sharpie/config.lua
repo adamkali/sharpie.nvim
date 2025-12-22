@@ -73,6 +73,7 @@ M.defaults = {
         path = 2,
         workspace_symbols = true, -- Query symbols from entire workspace/project, not just current file
         show_file_location = true, -- Show file path for symbols from other files
+        namespace_mode_separator_style = "line", -- Style for file separators in namespace mode: "line" | "box" | "bold"
     },
 
     -- Keybinding settings
@@ -80,14 +81,15 @@ M.defaults = {
         sharpie_local_leader = '+', -- prefix for all keybindings
         disable_default_keybindings = false,
         overrides = {
-            show_preview = "<localleader>ss",
-            hide_preview = "<localleader>sh",
-            step_to_next_symbol = "<localleader>sn",
-            step_to_prev_symbol = "<localleader>sp",
-            step_to_next_reference = "<localleader>sN",
-            step_to_prev_reference = "<localleader>sP",
-            search_symbols = "<localleader>sf",
-            toggle_highlight = "<localleader>sH",
+            show_preview = "<localleader>s",
+            hide_preview = "<localleader>h",
+            step_to_next_symbol = "<localleader>n",
+            step_to_prev_symbol = "<localleader>p",
+            step_to_next_reference = "<localleader>N",
+            step_to_prev_reference = "<localleader>P",
+            search_symbols = "<localleader>f",
+            toggle_highlight = "<localleader>H",
+            toggle_namespace_mode = "<localleader>t",
             start_filtering = "<localleader>s.",
         },
         -- Preview window keybindings (buffer-local)

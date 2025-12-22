@@ -6,17 +6,18 @@ A Neovim plugin for viewing and navigating C# and Go code structure using LSP sy
 
 - **Multi-Language Support**: Works with both C# and Go files with automatic language detection
 - **Symbol Tree View**: Display namespaces, classes, methods, properties, functions, structs, interfaces, and more in a structured preview window
+- **Namespace-Wide View**: Toggle between file-only and namespace-wide symbol viewing to see all symbols across an entire namespace/package
 - **LSP Integration**:
   - C#: OmniSharp or csharp-ls
   - Go: gopls
 - **Language-Specific Features**:
   - **C#**: Async/await indicators, Task<T> return types, access modifiers
   - **Go**: Method receivers, channel directions, exported/unexported symbols, goroutine detection, error returns
-- **Quick Navigation**: Jump to symbol definitions and navigate through references
+- **Quick Navigation**: Jump to symbol definitions and navigate through references (works across files in namespace mode)
 - **Fuzzy Search**: Search symbols using Telescope or FZF
 - **Symbol Highlighting**: Highlight all occurrences of a symbol in the buffer
 - **Quickfix Integration**: Add symbol references to the quickfix list
-- **Customizable Display**: Configure window style, icons, and symbol path depth
+- **Customizable Display**: Configure window style, icons, symbol path depth, and file separator styles
 
 ## Requirements
 
@@ -196,8 +197,11 @@ require('sharpie').setup({
 
     -- Symbol display options
     symbol_options = {
-        namespace = true, -- show all classes in namespace
+        namespace = true, -- Enable namespace-wide view (when toggled)
         path = 2, -- 0-3, controls symbol path depth
+        workspace_symbols = true, -- Required for namespace mode
+        show_file_location = true, -- Show file path for symbols from other files
+        namespace_mode_separator_style = "line", -- "line" | "box" | "bold"
     },
 
     -- Keybinding settings
@@ -205,14 +209,15 @@ require('sharpie').setup({
         sharpie_local_leader = '+',
         disable_default_keybindings = false,
         overrides = {
-            show_preview = "<localleader>ss",
-            hide_preview = "<localleader>sh",
-            step_to_next_symbol = "<localleader>sn",
-            step_to_prev_symbol = "<localleader>sp",
-            step_to_next_reference = "<localleader>sN",
-            step_to_prev_reference = "<localleader>sP",
-            search_symbols = "<localleader>sf",
-            toggle_highlight = "<localleader>sH",
+            show_preview = "<localleader>s",
+            hide_preview = "<localleader>h",
+            step_to_next_symbol = "<localleader>n",
+            step_to_prev_symbol = "<localleader>p",
+            step_to_next_reference = "<localleader>N",
+            step_to_prev_reference = "<localleader>P",
+            search_symbols = "<localleader>f",
+            toggle_highlight = "<localleader>H",
+            toggle_namespace_mode = "<localleader>t",
             start_filtering = "<localleader>s.",
         },
         -- Preview window keybindings (buffer-local)
@@ -237,6 +242,9 @@ require('sharpie').show(bufnr)
 
 -- Hide preview window
 require('sharpie').hide(bufnr)
+
+-- Toggle between file-only and namespace-wide view
+require('sharpie').toggle_namespace_mode()
 
 -- Navigate symbols
 require('sharpie').step_to_next_symbol(bufnr)
@@ -268,15 +276,16 @@ require('sharpie').checkhealth()
 
 With default configuration (using `+` as local leader prefix):
 
-- `+ss` - Show the preview window
-- `+sh` - Hide the preview window
-- `+sn` - Step to the next symbol
-- `+sp` - Step to the previous symbol
-- `+sN` - Step to the next reference
-- `+sP` - Step to the previous reference
-- `+sH` - Toggle highlighting
+- `+s` - Show the preview window
+- `+h` - Hide the preview window
+- `+n` - Step to the next symbol
+- `+p` - Step to the previous symbol
+- `+N` - Step to the next reference
+- `+P` - Step to the previous reference
+- `+H` - Toggle highlighting
+- `+t` - Toggle namespace mode (file-only ↔ namespace-wide)
 - `+s.` - Start filtering symbols
-- `+sf` - Search for symbols
+- `+f` - Search for symbols
 
 ### Preview Window Keybindings
 
@@ -444,15 +453,113 @@ require('sharpie').setup({
 - When you switch to a different C# file, the preview refreshes immediately and any active filter is cleared
 - Auto-reload only works when the preview window is already open - it won't open the preview automatically
 
+### Namespace-Wide Symbol View
+
+sharpie.nvim supports two viewing modes that you can toggle between:
+
+#### File-Only Mode (Default)
+Shows symbols only from the current file, just like traditional symbol viewers.
+
+#### Namespace-Wide Mode
+Shows all symbols from the current file's namespace/package across all files in your workspace. This is perfect for exploring large namespaces or packages without switching between files.
+
+**How it works:**
+
+1. **Auto-detection**: Automatically detects the namespace from your current file
+   - **C#**: Supports both file-scoped (`namespace MyApp.Services;`) and block-scoped (`namespace MyApp.Services { }`) namespaces
+   - **Go**: Detects package name (`package mypackage`)
+
+2. **Workspace Symbols**: Queries your LSP server for all symbols in the detected namespace
+
+3. **File Grouping**: Groups symbols by file with visual separators:
+   ```
+   Namespace: MyApp.Services (42 symbols across 5 files)
+   ══════════════════════════════════════════════════════════
+
+   ─── src/Services/UserService.cs (8 symbols) ───
+     󰊕  UserService
+     󰊕  GetUser(int id)
+     󰊕  CreateUser(User user)
+
+   ─── src/Services/EmailService.cs (6 symbols) ───
+     󰊕  EmailService
+     󰊕  SendEmail(string to, string subject)
+   ```
+
+4. **Seamless Navigation**: Navigate with `n`/`p` (automatically skips file headers) and jump with `<CR>` to symbols in any file
+
+**Toggle between modes:**
+- Press `+t` (or run `:SharpieToggleNamespaceMode`)
+- The preview window updates immediately with symbols from the current mode
+- Mode persists until you toggle again
+
+**Configuration:**
+
+```lua
+require('sharpie').setup({
+    symbol_options = {
+        namespace = true,  -- Enable namespace mode capability
+        workspace_symbols = true,  -- Required for namespace mode
+        namespace_mode_separator_style = "line",  -- "line" | "box" | "bold"
+    }
+})
+```
+
+**Separator Styles:**
+
+```lua
+-- Line style (default)
+─── src/Services/UserService.cs (8 symbols) ───
+
+-- Box style
+┌─── src/Services/UserService.cs (8 symbols)
+
+-- Bold style
+▶ src/Services/UserService.cs (8 symbols)
+```
+
+**Features in Namespace Mode:**
+- ✅ Auto-reload when editing files
+- ✅ Interactive filtering with `/`
+- ✅ Cross-file navigation
+- ✅ Relative file paths for cleaner display
+- ✅ Symbol count per file
+
+**Limitations:**
+- Requires LSP server with workspace symbol support (OmniSharp, csharp-ls, and gopls all support this)
+- Query performance depends on workspace size and LSP server
+- For Go, packages spanning multiple directories are shown separately per directory
+
 ## Example Workflow
 
-**Understanding the Two Modes:**
+**Understanding the Modes:**
 
-The preview window has two modes - Navigate Mode (browse) and Filter Mode (search):
+sharpie.nvim has two independent mode systems:
 
-1. **Open and Navigate** (Navigate Mode)
-   - Press `+ss` to show the symbol tree
+1. **View Modes** (File-Only vs Namespace-Wide)
+2. **Preview Modes** (Navigate vs Filter)
+
+### View Modes Workflow
+
+1. **File-Only Mode** (Default)
+   - Press `+s` to show symbols from the current file
    - Navigate with `n`/`p` through all symbols
+   - Press `<CR>` to jump to any symbol
+
+2. **Switch to Namespace-Wide Mode**
+   - Press `+t` to toggle namespace mode
+   - View updates to show all symbols from the current namespace across all files
+   - File headers separate symbols by file
+
+3. **Navigate Across Files**
+   - Use `n`/`p` to browse symbols (automatically skips file headers)
+   - Press `<CR>` to jump to a symbol in any file
+   - Press `+t` again to return to file-only mode
+
+### Preview Modes Workflow
+
+1. **Navigate Mode** (Default)
+   - Browse symbols with `n`/`p`
    - Press `<CR>` to jump to any symbol
 
 2. **Filter Symbols** (Enter Filter Mode)
@@ -466,13 +573,16 @@ The preview window has two modes - Navigate Mode (browse) and Filter Mode (searc
    - Press `<CR>` to jump to a filtered symbol
    - Press `<Esc>` to clear filter and see all symbols again
 
-4. **Automatic Updates**
-   - Edit your code - preview automatically refreshes
-   - Switch to another C# file - preview shows that file's symbols
+### Complete Workflow Example
 
-5. **Additional Features**
-   - Press `+sH` to highlight all occurrences of the symbol under cursor
-   - Use `+sN`/`+sP` to cycle through references
+1. Open a C# file and press `+s` to show symbols (file-only mode)
+2. Press `+t` to switch to namespace-wide view
+3. Press `/` and type "User" to filter symbols containing "User"
+4. Navigate filtered results with `n`/`p` across all files in the namespace
+5. Press `<CR>` to jump to a symbol in another file
+6. Edit your code - preview automatically refreshes
+7. Press `+H` to highlight all occurrences of the symbol under cursor
+8. Use `+N`/`+P` to cycle through references
 
 ## Symbol Path Depth
 
@@ -584,6 +694,7 @@ In addition to the API functions, sharpie.nvim provides user commands:
 - `:SharpieHide` - Hide the preview window
 - `:SharpieSearch` - Search symbols with fuzzy finder
 - `:SharpieToggleHighlight` - Toggle symbol highlighting
+- `:SharpieToggleNamespaceMode` - Toggle between file-only and namespace-wide view
 - `:SharpieNextSymbol` - Jump to next symbol
 - `:SharpiePrevSymbol` - Jump to previous symbol
 - `:SharpieNextReference` - Jump to next reference

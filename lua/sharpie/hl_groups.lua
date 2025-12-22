@@ -40,6 +40,10 @@ M.highlight_groups = {
     -- Preview window
     SharpiePreviewBorder = { link = "FloatBorder" },
     SharpiePreviewTitle = { link = "Title" },
+
+    -- Namespace mode specific highlights
+    SharpieNamespaceHeader = { fg = "#61AFEF", bold = true },  -- Blue, bold
+    SharpieFileHeader = { fg = "#98C379", bold = true },       -- Green, bold
 }
 
 -- Initialize highlight groups
