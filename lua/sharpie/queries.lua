@@ -183,10 +183,19 @@ function M.find_symbol_occurrences(bufnr, symbol_name)
     return occurrences
 end
 
--- Check if buffer has C# filetype
+-- Get language configuration for buffer
+-- @param bufnr number|nil: Buffer number (default: current buffer)
+-- @return table|nil: Language configuration or nil if not supported
+function M.get_buffer_language(bufnr)
+    local language = require('sharpie.language')
+    return language.detect_language(bufnr)
+end
+
+-- Check if buffer has C# filetype (legacy function for backward compatibility)
+-- @deprecated Use get_buffer_language instead
 function M.is_csharp_buffer(bufnr)
-    local ft = vim.api.nvim_buf_get_option(bufnr, 'filetype')
-    return ft == 'cs' or ft == 'csharp'
+    local lang = M.get_buffer_language(bufnr)
+    return lang and lang.name == "csharp"
 end
 
 return M

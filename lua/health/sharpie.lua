@@ -7,6 +7,7 @@ function M.check()
     local utils = require('sharpie.utils')
     local config = require('sharpie.config')
     local queries = require('sharpie.queries')
+    local language = require('sharpie.language')
 
     vim.health.start("sharpie.nvim")
 
@@ -33,16 +34,22 @@ function M.check()
         end
     else
         vim.health.warn("No LSP clients active", {
-            "Start an LSP client for C# files",
-            "Try: OmniSharp or csharp-ls"
+            "Start an LSP client for supported languages",
+            "C#: OmniSharp or csharp-ls",
+            "Go: gopls"
         })
     end
 
-    -- Check for C# LSP specifically
+    -- Check for language-specific LSP clients
     local bufnr = vim.api.nvim_get_current_buf()
-    local csharp_client = utils.get_csharp_client(bufnr)
+    local lang_clients_found = {}
+
+    -- Check C# LSP
+    local csharp_config = language.get_language("csharp")
+    local csharp_client = utils.get_lsp_client(bufnr, csharp_config)
     if csharp_client then
         vim.health.ok(string.format("C# LSP client found: %s", csharp_client.name))
+        lang_clients_found.csharp = csharp_client
 
         -- Check LSP capabilities
         local caps = csharp_client.server_capabilities
@@ -64,18 +71,54 @@ function M.check()
             vim.health.warn("  Missing definition support")
         end
     else
-        vim.health.warn("No C# LSP client found", {
-            "Install and configure OmniSharp or csharp-ls",
-            "Ensure the LSP client is attached to C# buffers"
+        vim.health.info("No C# LSP client found", {
+            "Install OmniSharp or csharp-ls if you need C# support",
+            "This is optional if you only use Go"
         })
     end
 
-    -- Check current buffer
-    local ft = vim.api.nvim_buf_get_option(bufnr, 'filetype')
-    if queries.is_csharp_buffer(bufnr) then
-        vim.health.ok(string.format("Current buffer is C# (filetype: %s)", ft))
+    -- Check Go LSP
+    local go_config = language.get_language("go")
+    local go_client = utils.get_lsp_client(bufnr, go_config)
+    if go_client then
+        vim.health.ok(string.format("Go LSP client found: %s", go_client.name))
+        lang_clients_found.go = go_client
+
+        -- Check LSP capabilities
+        local caps = go_client.server_capabilities
+        if caps.documentSymbolProvider then
+            vim.health.ok("  Supports document symbols")
+        else
+            vim.health.error("  Missing document symbol support")
+        end
+
+        if caps.referencesProvider then
+            vim.health.ok("  Supports references")
+        else
+            vim.health.warn("  Missing references support")
+        end
+
+        if caps.definitionProvider then
+            vim.health.ok("  Supports go-to-definition")
+        else
+            vim.health.warn("  Missing definition support")
+        end
     else
-        vim.health.info(string.format("Current buffer is not C# (filetype: %s)", ft))
+        vim.health.info("No Go LSP client found", {
+            "Install gopls if you need Go support",
+            "This is optional if you only use C#"
+        })
+    end
+
+    -- Check current buffer language
+    local ft = vim.api.nvim_buf_get_option(bufnr, 'filetype')
+    local current_lang = queries.get_buffer_language(bufnr)
+    if current_lang then
+        vim.health.ok(string.format("Current buffer is %s (filetype: %s)", current_lang.display_name, ft))
+    else
+        vim.health.info(string.format("Current buffer is not a supported language (filetype: %s)", ft), {
+            "Supported languages: C# (cs/csharp), Go (go)"
+        })
     end
 
     -- Check treesitter
@@ -83,12 +126,22 @@ function M.check()
         vim.health.ok("Treesitter is available")
 
         -- Check for C# parser
-        local has_parser = pcall(vim.treesitter.get_parser, bufnr, 'c_sharp')
-        if has_parser then
+        local has_csharp_parser = pcall(vim.treesitter.get_parser, bufnr, 'c_sharp')
+        if has_csharp_parser then
             vim.health.ok("  C# parser installed")
         else
             vim.health.info("  C# parser not installed (optional)", {
                 "Install with: :TSInstall c_sharp"
+            })
+        end
+
+        -- Check for Go parser
+        local has_go_parser = pcall(vim.treesitter.get_parser, bufnr, 'go')
+        if has_go_parser then
+            vim.health.ok("  Go parser installed")
+        else
+            vim.health.info("  Go parser not installed (optional)", {
+                "Install with: :TSInstall go"
             })
         end
     else
@@ -172,15 +225,30 @@ function M.check()
     -- Summary
     vim.health.start("Summary")
     local issues = 0
+    local warnings = 0
 
     if not version_ok then issues = issues + 1 end
     if #active_clients == 0 then issues = issues + 1 end
-    if not csharp_client then issues = issues + 1 end
+
+    -- At least one language LSP should be available
+    if not (lang_clients_found.csharp or lang_clients_found.go) then
+        warnings = warnings + 1
+    end
+
     if fuzzy_config == "telescope" and not pcall(require, 'telescope') then issues = issues + 1 end
     if fuzzy_config == "fzf" and not pcall(require, 'fzf-lua') then issues = issues + 1 end
 
-    if issues == 0 then
+    if issues == 0 and warnings == 0 then
         vim.health.ok("All checks passed! sharpie.nvim is ready to use")
+        if lang_clients_found.csharp and lang_clients_found.go then
+            vim.health.info("Both C# and Go LSP clients are available")
+        elseif lang_clients_found.csharp then
+            vim.health.info("C# LSP client is available (Go is optional)")
+        elseif lang_clients_found.go then
+            vim.health.info("Go LSP client is available (C# is optional)")
+        end
+    elseif issues == 0 and warnings > 0 then
+        vim.health.info(string.format("%d warning(s) found. Plugin will work but some features may be limited", warnings))
     else
         vim.health.warn(string.format("%d issue(s) found. See above for details", issues))
     end

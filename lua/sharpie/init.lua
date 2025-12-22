@@ -7,6 +7,7 @@ local hl_groups = require('sharpie.hl_groups')
 local fuzzy = require('sharpie.fuzzy')
 local logger = require('sharpie.logger')
 local symbol_utils = require('sharpie.symbol_utils')
+local language = require('sharpie.language')
 
 local M = {}
 
@@ -15,6 +16,7 @@ M.state = {
     preview_bufnr = nil,
     preview_winnr = nil,
     main_bufnr = nil,
+    current_language = nil,  -- Current language configuration
     symbols = {},
     filtered_symbols = {},  -- Filtered symbols for preview
     current_symbol_index = 1,
@@ -92,7 +94,7 @@ function M.setup_autocommands()
     -- Refresh preview when switching to a different buffer
     vim.api.nvim_create_autocmd('BufEnter', {
         group = group,
-        pattern = '*.cs',
+        pattern = language.get_all_file_patterns(),
         callback = function(ev)
             -- Only refresh if preview is open and we switched to a different C# file
             if M.state.preview_winnr and vim.api.nvim_win_is_valid(M.state.preview_winnr) then
@@ -128,7 +130,7 @@ function M.setup_autocommands()
 
         vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI' }, {
             group = group,
-            pattern = '*.cs',
+            pattern = language.get_all_file_patterns(),
             callback = function(ev)
                 -- Debounce: cancel previous timer and start new one
                 if refresh_timer then
@@ -146,7 +148,7 @@ function M.setup_autocommands()
         -- Also refresh immediately after save
         vim.api.nvim_create_autocmd('BufWritePost', {
             group = group,
-            pattern = '*.cs',
+            pattern = language.get_all_file_patterns(),
             callback = function(ev)
                 -- Cancel any pending debounced refresh
                 if refresh_timer then
@@ -202,12 +204,16 @@ function M.show(bufnr)
     logger.info("init", "show() called", { bufnr = bufnr })
     M.state.main_bufnr = bufnr
 
-    -- Check if buffer is C#
-    if not queries.is_csharp_buffer(bufnr) then
-        logger.warn("init", "Attempted to show symbols for non-C# buffer", { bufnr = bufnr })
-        utils.notify("Not a C# buffer", vim.log.levels.WARN)
+    -- Detect language for this buffer
+    local lang_config = queries.get_buffer_language(bufnr)
+    if not lang_config then
+        logger.warn("init", "Attempted to show symbols for unsupported buffer", { bufnr = bufnr })
+        utils.notify("Not a supported language buffer (C# or Go)", vim.log.levels.WARN)
         return
     end
+
+    logger.debug("init", "Detected language", { language = lang_config.name })
+    M.state.current_language = lang_config
 
     -- Get symbols from LSP
     lsp.get_document_symbols(bufnr, function(symbols)
@@ -274,10 +280,28 @@ function M.render_preview(symbols, use_filtered)
     -- NAVIGATE MODE (no filter): No header, just symbols
 
     for _, symbol in ipairs(symbols_to_display) do
-        -- Get appropriate icon (handles Task types specially)
-        local icon = symbol_utils.get_symbol_icon(symbol, config.get())
+        -- Get language-specific handler
+        local lang_handler = M.state.current_language and language.get_handler(M.state.current_language)
+
+        -- Get appropriate icon (language-specific)
+        local icon
+        if lang_handler and lang_handler.get_symbol_icon then
+            icon = lang_handler.get_symbol_icon(symbol, config.get())
+        else
+            -- Fallback to generic icon from config
+            icon = config.get_icon(symbol.kind)
+        end
+
         local formatted_name = utils.format_symbol_path(symbol, config.get().symbol_options.path)
-        local indicators = utils.get_symbol_indicators(symbol)
+
+        -- Get language-specific indicators
+        local indicators
+        if lang_handler and lang_handler.get_indicators then
+            indicators = lang_handler.get_indicators(symbol)
+        else
+            indicators = {}
+        end
+
         local indicator_str = #indicators > 0 and ("(" .. table.concat(indicators, " ") .. ")") or ""
 
         local line = string.format("%s %s %s", icon, indicator_str, formatted_name)
@@ -580,10 +604,14 @@ end
 function M.search_symbols(query, bufnr)
     bufnr = bufnr or vim.api.nvim_get_current_buf()
 
-    if not queries.is_csharp_buffer(bufnr) then
-        utils.notify("Not a C# buffer", vim.log.levels.WARN)
+    -- Detect language for this buffer
+    local lang_config = queries.get_buffer_language(bufnr)
+    if not lang_config then
+        utils.notify("Not a supported language buffer (C# or Go)", vim.log.levels.WARN)
         return
     end
+
+    M.state.current_language = lang_config
 
     lsp.get_document_symbols(bufnr, function(symbols)
         if not symbols or #symbols == 0 then

@@ -25,6 +25,7 @@ M.defaults = {
     -- Style settings
     style = {
         icon_set = {
+            -- Generic LSP symbol kinds
             namespace = "",
             class = "",
             method = "",
@@ -38,6 +39,7 @@ M.defaults = {
             operator = "",
             type_parameter = "",
             search = "",
+            -- Generic type icons
             integer = "",
             string = "󰀬",
             boolean = "",
@@ -48,7 +50,15 @@ M.defaults = {
             object = "",
             dictionary = "",
             key = "",
+            -- C# specific
             task = "⏳",  -- Hourglass for Task/async methods
+            -- Go specific
+            go_slice = "󰅪",  -- Slice (similar to array but distinct)
+            go_map = "",  -- Map/dictionary
+            go_channel = "󰘖",  -- Channel
+            go_interface = "",  -- Interface
+            go_struct = "",  -- Struct
+            go_error = "",  -- Error type
         }
     },
 
@@ -89,6 +99,32 @@ M.defaults = {
             filter = "/",                  -- Start filtering/searching
             clear_filter = "<Esc>",        -- Clear filter and show all symbols
         }
+    },
+
+    -- Language-specific feature configuration
+    language = {
+        -- Auto-detect language from buffer filetype (default behavior)
+        auto_detect = true,
+
+        -- Force a specific language: "csharp" | "go" | nil
+        -- nil = use auto-detection based on filetype
+        force = nil,
+
+        -- C# specific features
+        csharp = {
+            show_async_indicators = true,  -- Show async/await indicators
+            show_access_modifiers = true,  -- Show public/private/protected
+            show_task_types = true,        -- Show Task<T> return type icons
+        },
+
+        -- Go specific features
+        go = {
+            show_receiver_types = true,        -- Show method receiver types
+            show_channel_direction = true,     -- Show channel direction indicators
+            show_exported_indicator = true,    -- Show exported vs unexported symbols
+            detect_goroutine_funcs = true,     -- Detect and mark goroutine functions
+            show_error_returns = true,         -- Highlight functions returning errors
+        },
     },
 
     -- Logging configuration

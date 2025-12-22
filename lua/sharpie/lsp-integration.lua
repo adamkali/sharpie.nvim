@@ -48,33 +48,53 @@ function M.get_document_symbols(bufnr, callback)
     end)
 end
 
--- Clean symbol name (remove file extensions)
-local function clean_symbol_name(name)
+-- Clean symbol name (remove file extensions based on language)
+-- @param name string: Symbol name to clean
+-- @param language_config table|nil: Language configuration (optional)
+-- @return string: Cleaned symbol name
+local function clean_symbol_name(name, language_config)
     if not name then
         return name
     end
 
-    -- Remove common file extensions
-    name = name:gsub("%.cs$", "")
-    name = name:gsub("%.vb$", "")
-    name = name:gsub("%.fs$", "")
+    -- If language config provided, use its file extensions
+    if language_config and language_config.file_extensions then
+        for _, ext in ipairs(language_config.file_extensions) do
+            -- Escape special pattern characters in extension
+            local escaped_ext = ext:gsub("[%.%-]", "%%%1")
 
-    -- Remove .cs from middle of names (e.g., "File.cs.Namespace" -> "File.Namespace")
-    name = name:gsub("%.cs%.", ".")
-    name = name:gsub("%.vb%.", ".")
-    name = name:gsub("%.fs%.", ".")
+            -- Remove extension from end of name
+            name = name:gsub(escaped_ext .. "$", "")
+
+            -- Remove extension from middle of names (e.g., "File.go.Package" -> "File.Package")
+            name = name:gsub(escaped_ext .. "%.", ".")
+        end
+    else
+        -- Fallback to C# extensions for backward compatibility
+        name = name:gsub("%.cs$", "")
+        name = name:gsub("%.vb$", "")
+        name = name:gsub("%.fs$", "")
+        name = name:gsub("%.cs%.", ".")
+        name = name:gsub("%.vb%.", ".")
+        name = name:gsub("%.fs%.", ".")
+    end
 
     return name
 end
 
 -- Flatten hierarchical symbols into a flat list
-function M.flatten_symbols(symbols, parent_name, result)
+-- @param symbols table: Hierarchical symbol list from LSP
+-- @param parent_name string|nil: Parent symbol name for building full paths
+-- @param result table|nil: Accumulator for flattened results
+-- @param language_config table|nil: Language configuration for extension cleaning
+-- @return table: Flat list of symbols
+function M.flatten_symbols(symbols, parent_name, result, language_config)
     result = result or {}
     parent_name = parent_name or ""
 
     for _, symbol in ipairs(symbols) do
-        -- Clean the symbol name
-        local clean_name = clean_symbol_name(symbol.name)
+        -- Clean the symbol name (remove file extensions)
+        local clean_name = clean_symbol_name(symbol.name, language_config)
 
         -- Build full name with parent context
         local full_name = parent_name ~= "" and (parent_name .. "." .. clean_name) or clean_name
@@ -94,7 +114,7 @@ function M.flatten_symbols(symbols, parent_name, result)
 
         -- Recursively process children
         if symbol.children and #symbol.children > 0 then
-            M.flatten_symbols(symbol.children, full_name, result)
+            M.flatten_symbols(symbol.children, full_name, result, language_config)
         end
     end
 

@@ -1,11 +1,17 @@
 # sharpie.nvim
 
-A Neovim plugin for viewing and navigating C# class structure using LSP symbols with a TUI interface.
+A Neovim plugin for viewing and navigating C# and Go code structure using LSP symbols with a TUI interface.
 
 ## Features
 
-- **Symbol Tree View**: Display namespaces, classes, methods, properties, and more in a structured preview window
-- **LSP Integration**: Uses C# language server (OmniSharp, csharp-ls) for accurate symbol information
+- **Multi-Language Support**: Works with both C# and Go files with automatic language detection
+- **Symbol Tree View**: Display namespaces, classes, methods, properties, functions, structs, interfaces, and more in a structured preview window
+- **LSP Integration**:
+  - C#: OmniSharp or csharp-ls
+  - Go: gopls
+- **Language-Specific Features**:
+  - **C#**: Async/await indicators, Task<T> return types, access modifiers
+  - **Go**: Method receivers, channel directions, exported/unexported symbols, goroutine detection, error returns
 - **Quick Navigation**: Jump to symbol definitions and navigate through references
 - **Fuzzy Search**: Search symbols using Telescope or FZF
 - **Symbol Highlighting**: Highlight all occurrences of a symbol in the buffer
@@ -15,9 +21,11 @@ A Neovim plugin for viewing and navigating C# class structure using LSP symbols 
 ## Requirements
 
 - Neovim >= 0.8.0
-- C# LSP server (OmniSharp or csharp-ls)
+- At least one LSP server:
+  - **C#**: OmniSharp or csharp-ls
+  - **Go**: gopls
 - Optional: [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) or [fzf-lua](https://github.com/ibhagwan/fzf-lua) for fuzzy finding
-- Optional: [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) with C# parser (fallback)
+- Optional: [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) with C# (`c_sharp`) or Go (`go`) parser (fallback)
 
 ## Installation
 
@@ -29,7 +37,7 @@ A Neovim plugin for viewing and navigating C# class structure using LSP symbols 
 ```lua
 {
     'yourusername/sharpie.nvim',
-    ft = { 'cs', 'csharp' },  -- Lazy load on C# files
+    ft = { 'cs', 'csharp', 'go' },  -- Lazy load on C# and Go files
     dependencies = { 'nvim-telescope/telescope.nvim' },
     opts = {
         fuzzy_finder = "telescope",
@@ -49,7 +57,7 @@ A Neovim plugin for viewing and navigating C# class structure using LSP symbols 
 ```lua
 {
     'yourusername/sharpie.nvim',
-    ft = { 'cs', 'csharp' },
+    ft = { 'cs', 'csharp', 'go' },
     dependencies = { 'nvim-telescope/telescope.nvim' },
     opts = {},  -- Use all defaults
 }
@@ -59,16 +67,23 @@ A Neovim plugin for viewing and navigating C# class structure using LSP symbols 
 ```lua
 {
     'yourusername/sharpie.nvim',
-    ft = { 'cs', 'csharp' },
+    ft = { 'cs', 'csharp', 'go' },
     dependencies = { 'nvim-telescope/telescope.nvim' },
     config = function()
         require('sharpie').setup({
             fuzzy_finder = "telescope",
             display = { style = "bottom", height = 20 },
+            -- Language-specific features
+            language = {
+                go = {
+                    show_receiver_types = true,
+                    show_channel_direction = true,
+                },
+            },
         })
 
         -- Add custom keybindings or additional setup
-        vim.keymap.set('n', '<leader>cs', '<cmd>SharpieShow<cr>', { desc = 'C#: Show symbols' })
+        vim.keymap.set('n', '<leader>cs', '<cmd>SharpieShow<cr>', { desc = 'Show symbols' })
     end,
 }
 ```
@@ -90,7 +105,7 @@ A Neovim plugin for viewing and navigating C# class structure using LSP symbols 
 {
     'yourusername/sharpie.nvim',
     cmd = { 'SharpieShow', 'SharpieHide', 'SharpieSearch' },
-    ft = { 'cs', 'csharp' },
+    ft = { 'cs', 'csharp', 'go' },
     dependencies = { 'nvim-telescope/telescope.nvim' },
     opts = {
         logging = { level = "DEBUG" },

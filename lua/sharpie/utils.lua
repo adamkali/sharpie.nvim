@@ -204,15 +204,33 @@ function M.has_lsp_client(bufnr, client_name)
     return false
 end
 
--- Get C# LSP client for buffer
-function M.get_csharp_client(bufnr)
+-- Get LSP client for buffer based on language configuration
+-- @param bufnr number: Buffer number
+-- @param language_config table: Language configuration from language.lua
+-- @return table|nil: LSP client or nil if not found
+function M.get_lsp_client(bufnr, language_config)
+    if not language_config then
+        return nil
+    end
+
     local clients = vim.lsp.get_clients({bufnr = bufnr})
     for _, client in ipairs(clients) do
-        if client.name:match("omnisharp") or client.name:match("csharp") then
-            return client
+        -- Check if client name matches any of the language's LSP client patterns
+        for _, pattern in ipairs(language_config.lsp_clients) do
+            if client.name:match(pattern) then
+                return client
+            end
         end
     end
     return nil
+end
+
+-- Legacy function for backward compatibility
+-- @deprecated Use get_lsp_client with language config instead
+function M.get_csharp_client(bufnr)
+    local language = require('sharpie.language')
+    local csharp_config = language.get_language("csharp")
+    return M.get_lsp_client(bufnr, csharp_config)
 end
 
 -- Debounce function
